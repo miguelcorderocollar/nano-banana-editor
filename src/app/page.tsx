@@ -3,12 +3,56 @@
 import Image from "next/image";
 import { useState } from "react";
 
+interface ImageHistoryItem {
+  image: string;
+  prompt: string;
+  timestamp: number;
+}
+
 export default function Home() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [instructions, setInstructions] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitMessage, setSubmitMessage] = useState<string>("");
+  const [imageHistory, setImageHistory] = useState<ImageHistoryItem[]>([]);
+  const [responseText, setResponseText] = useState<string | null>(null);
+
+  // Helper function to convert data URL to File
+  const dataURLtoFile = async (dataurl: string, filename: string): Promise<File> => {
+    const response = await fetch(dataurl);
+    const blob = await response.blob();
+    return new File([blob], filename, { type: blob.type });
+  };
+
+  // Function to revert to a previous image from history
+  const revertToHistoryImage = async (historyItem: ImageHistoryItem, index: number) => {
+    try {
+      // Add current image to history if it's not already there
+      if (selectedImage) {
+        const currentHistoryItem: ImageHistoryItem = {
+          image: selectedImage,
+          prompt: `Current image (reverting to #${index + 1})`,
+          timestamp: Date.now()
+        };
+        setImageHistory(prev => [...prev, currentHistoryItem]);
+      }
+      
+      // Set the selected history image as current
+      setSelectedImage(historyItem.image);
+      const newFile = await dataURLtoFile(historyItem.image, `reverted_${Date.now()}.png`);
+      setSelectedFile(newFile);
+      
+      // Clear any messages and set instructions hint
+      setSubmitMessage(`Reverted to image #${index + 1} - "${historyItem.prompt}"`);
+      setInstructions("");
+      setResponseText(null);
+      
+    } catch (error) {
+      console.error('Error reverting to history image:', error);
+      setSubmitMessage(`Error reverting to image #${index + 1}`);
+    }
+  };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -46,9 +90,37 @@ export default function Home() {
       const result = await response.json();
 
       if (response.ok) {
-        setSubmitMessage(`Success! Image processed (${result.imageSize} bytes)`);
+        setSubmitMessage(`Success! Image processed by Nano Banana (${result.originalImageSize} bytes)`);
+        setResponseText(result.responseText);
+        
+        if (result.generatedImage) {
+          // Add current image to history before replacing it
+          if (selectedImage) {
+            const historyItem: ImageHistoryItem = {
+              image: selectedImage,
+              prompt: instructions.trim(),
+              timestamp: Date.now()
+            };
+            setImageHistory(prev => [...prev, historyItem]);
+          }
+          
+          // Replace current image with generated result
+          setSelectedImage(result.generatedImage);
+          
+          // Convert the generated image back to a File for future processing
+          try {
+            const newFile = await dataURLtoFile(result.generatedImage, `edited_${Date.now()}.png`);
+            setSelectedFile(newFile);
+          } catch (error) {
+            console.error('Error converting generated image to file:', error);
+          }
+          
+          // Clear instructions for next iteration
+          setInstructions("");
+        }
       } else {
         setSubmitMessage(`Error: ${result.error}`);
+        setResponseText(null);
       }
     } catch (error) {
       console.error('Error submitting form:', error);
@@ -59,7 +131,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-50">
+    <div className={`min-h-screen flex flex-col items-center justify-center p-8 bg-gray-50 ${imageHistory.length > 0 ? 'pb-32' : ''}`}>
       <div className="max-w-4xl w-full space-y-8">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
@@ -139,14 +211,56 @@ export default function Home() {
                     disabled={isSubmitting || !instructions.trim()}
                     className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
                   >
-                    {isSubmitting ? 'Processing...' : 'Submit'}
+                    {isSubmitting ? 'Processing with Nano Banana...' : 'Process with AI'}
                   </button>
                 </div>
               </form>
+              
+              {responseText && (
+                <div className="p-4 bg-blue-50 rounded-lg border border-blue-200 mt-4">
+                  <h4 className="font-medium text-blue-900 mb-2">Latest AI Response:</h4>
+                  <p className="text-blue-800">{responseText}</p>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
+      
+      {/* Image History Strip */}
+      {imageHistory.length > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg p-4">
+          <div className="max-w-6xl mx-auto">
+            <h3 className="text-sm font-medium text-gray-700 mb-3">Image History</h3>
+            <div className="flex space-x-3 overflow-x-auto pb-2">
+              {imageHistory.map((item, index) => (
+                <div key={item.timestamp} className="flex-shrink-0">
+                  <div 
+                    className="w-20 h-20 relative group cursor-pointer hover:ring-2 hover:ring-blue-500 rounded-lg transition-all"
+                    onClick={() => revertToHistoryImage(item, index)}
+                    title={`Click to revert to: "${item.prompt}"`}
+                  >
+                    <Image
+                      src={item.image}
+                      alt={`History ${index + 1}`}
+                      fill
+                      className="rounded-lg object-cover"
+                    />
+                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all rounded-lg flex items-center justify-center">
+                      <span className="text-white text-xs opacity-0 group-hover:opacity-100 font-medium">
+                        #{index + 1}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-1 text-xs text-gray-500 text-center max-w-20 truncate">
+                    {item.prompt}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
