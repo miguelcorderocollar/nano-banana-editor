@@ -28,15 +28,8 @@ export default function Home() {
   // Function to revert to a previous image from history
   const revertToHistoryImage = async (historyItem: ImageHistoryItem, index: number) => {
     try {
-      // Add current image to history if it's not already there
-      if (selectedImage) {
-        const currentHistoryItem: ImageHistoryItem = {
-          image: selectedImage,
-          prompt: `Current image (reverting to #${index + 1})`,
-          timestamp: Date.now()
-        };
-        setImageHistory(prev => [...prev, currentHistoryItem]);
-      }
+      // Truncate history to the selected point (pop everything after this index)
+      setImageHistory(prev => prev.slice(0, index));
       
       // Set the selected history image as current
       setSelectedImage(historyItem.image);
@@ -240,13 +233,12 @@ export default function Home() {
                     onClick={() => revertToHistoryImage(item, index)}
                     title={`Click to revert to: "${item.prompt}"`}
                   >
-                    <Image
+                    <img
                       src={item.image}
                       alt={`History ${index + 1}`}
-                      fill
-                      className="rounded-lg object-cover"
+                      className="w-full h-full rounded-lg object-cover"
                     />
-                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all rounded-lg flex items-center justify-center">
+                    <div className="absolute inset-0 bg-transparent group-hover:bg-black group-hover:bg-opacity-50 transition-all rounded-lg flex items-center justify-center">
                       <span className="text-white text-xs opacity-0 group-hover:opacity-100 font-medium">
                         #{index + 1}
                       </span>
