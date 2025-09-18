@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import NextImage from "next/image";
 import { useState } from "react";
 
 interface ImageHistoryItem {
@@ -17,6 +17,7 @@ export default function Home() {
   const [submitMessage, setSubmitMessage] = useState<string>("");
   const [imageHistory, setImageHistory] = useState<ImageHistoryItem[]>([]);
   const [responseText, setResponseText] = useState<string | null>(null);
+  const [debugMode, setDebugMode] = useState<boolean>(false);
 
   // Helper function to convert data URL to File
   const dataURLtoFile = async (dataurl: string, filename: string): Promise<File> => {
@@ -62,8 +63,8 @@ export default function Home() {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     
-    if (!selectedFile || !instructions.trim()) {
-      setSubmitMessage("Please provide both an image and instructions.");
+    if (!selectedFile || (!instructions.trim() && !debugMode)) {
+      setSubmitMessage("Please provide an image" + (debugMode ? "." : " and instructions."));
       return;
     }
 
@@ -71,49 +72,83 @@ export default function Home() {
     setSubmitMessage("");
 
     try {
-      const formData = new FormData();
-      formData.append('image', selectedFile);
-      formData.append('instructions', instructions.trim());
+      if (debugMode) {
+        // DEBUG MODE: bypass API and overlay iteration number on image
+        const iterationNumber = imageHistory.length + 1;
 
-      const response = await fetch('/api/process-image', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const result = await response.json();
-
-      if (response.ok) {
-        setSubmitMessage(`Success! Image processed by Nano Banana (${result.originalImageSize} bytes)`);
-        setResponseText(result.responseText);
-        
-        if (result.generatedImage) {
-          // Add current image to history before replacing it
-          if (selectedImage) {
-            const historyItem: ImageHistoryItem = {
-              image: selectedImage,
-              prompt: instructions.trim(),
-              timestamp: Date.now()
-            };
-            setImageHistory(prev => [...prev, historyItem]);
-          }
-          
-          // Replace current image with generated result
-          setSelectedImage(result.generatedImage);
-          
-          // Convert the generated image back to a File for future processing
-          try {
-            const newFile = await dataURLtoFile(result.generatedImage, `edited_${Date.now()}.png`);
-            setSelectedFile(newFile);
-          } catch (error) {
-            console.error('Error converting generated image to file:', error);
-          }
-          
-          // Clear instructions for next iteration
-          setInstructions("");
+        // Ensure we have a base image to work with
+        const baseImage = selectedImage;
+        if (!baseImage) {
+          throw new Error('No base image available for debug processing');
         }
+
+        // Add current image to history before replacing it
+        const historyItem: ImageHistoryItem = {
+          image: baseImage,
+          prompt: instructions.trim(),
+          timestamp: Date.now()
+        };
+        setImageHistory(prev => [...prev, historyItem]);
+
+        const generatedImage = await overlayIterationNumberOnImage(baseImage, iterationNumber);
+
+        setSelectedImage(generatedImage);
+
+        try {
+          const newFile = await dataURLtoFile(generatedImage, `edited_${Date.now()}.png`);
+          setSelectedFile(newFile);
+        } catch (error) {
+          console.error('Error converting generated image to file:', error);
+        }
+
+        setSubmitMessage(`Success! Debug mode generated image #${iterationNumber}`);
+        setResponseText('Debug mode: API call skipped.');
+        setInstructions("");
       } else {
-        setSubmitMessage(`Error: ${result.error}`);
-        setResponseText(null);
+        const formData = new FormData();
+        formData.append('image', selectedFile);
+        formData.append('instructions', instructions.trim());
+
+        const response = await fetch('/api/process-image', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          setSubmitMessage(`Success! Image processed by Nano Banana (${result.originalImageSize} bytes)`);
+          setResponseText(result.responseText);
+          
+          if (result.generatedImage) {
+            // Add current image to history before replacing it
+            if (selectedImage) {
+              const historyItem: ImageHistoryItem = {
+                image: selectedImage,
+                prompt: instructions.trim(),
+                timestamp: Date.now()
+              };
+              setImageHistory(prev => [...prev, historyItem]);
+            }
+            
+            // Replace current image with generated result
+            setSelectedImage(result.generatedImage);
+            
+            // Convert the generated image back to a File for future processing
+            try {
+              const newFile = await dataURLtoFile(result.generatedImage, `edited_${Date.now()}.png`);
+              setSelectedFile(newFile);
+            } catch (error) {
+              console.error('Error converting generated image to file:', error);
+            }
+            
+            // Clear instructions for next iteration
+            setInstructions("");
+          }
+        } else {
+          setSubmitMessage(`Error: ${result.error}`);
+          setResponseText(null);
+        }
       }
     } catch (error) {
       console.error('Error submitting form:', error);
@@ -121,6 +156,65 @@ export default function Home() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // Draw a bright yellow iteration number on the bottom-right corner of the image
+  const overlayIterationNumberOnImage = async (imageDataUrl: string, iteration: number): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Canvas context not available'));
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0);
+
+          // Determine font size relative to image size
+          const fontSize = Math.max(24, Math.floor(canvas.width * 0.1));
+          ctx.font = `bold ${fontSize}px sans-serif`;
+          ctx.textBaseline = 'bottom';
+
+          const text = String(iteration);
+          const padding = Math.max(10, Math.floor(canvas.width * 0.02));
+
+          // Measure text width/height
+          const metrics = ctx.measureText(text);
+          const textWidth = metrics.width;
+          const textHeight = fontSize; // rough approximation
+
+          const x = canvas.width - padding - textWidth;
+          const y = canvas.height - padding;
+
+          // Optional dark translucent background for readability
+          const bgPaddingX = Math.floor(padding * 0.6);
+          const bgPaddingY = Math.floor(padding * 0.4);
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          ctx.fillRect(x - bgPaddingX, y - textHeight - bgPaddingY, textWidth + bgPaddingX * 2, textHeight + bgPaddingY * 2);
+
+          // Stroke for contrast
+          ctx.lineWidth = Math.max(2, Math.floor(fontSize * 0.08));
+          ctx.strokeStyle = 'black';
+          ctx.strokeText(text, x, y);
+
+          // Bright yellow fill
+          ctx.fillStyle = '#ffff00';
+          ctx.fillText(text, x, y);
+
+          const resultUrl = canvas.toDataURL('image/png');
+          resolve(resultUrl);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = (e) => reject(new Error('Failed to load base image for canvas'));
+      img.src = imageDataUrl;
+    });
   };
 
   return (
@@ -136,6 +230,18 @@ export default function Home() {
         </div>
 
         <div className="space-y-8">
+          <div className="flex items-center justify-end">
+            <label className="inline-flex items-center space-x-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                checked={debugMode}
+                onChange={(e) => setDebugMode(e.target.checked)}
+                disabled={isSubmitting}
+              />
+              <span className="text-sm text-gray-700">Debug mode (skip API)</span>
+            </label>
+          </div>
           {!selectedImage && (
             <div className="flex items-center justify-center">
               <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
@@ -162,7 +268,7 @@ export default function Home() {
             <div className="space-y-6">
               <div className="flex justify-center">
                 <div className="relative">
-                  <Image
+                  <NextImage
                     src={selectedImage}
                     alt="Uploaded thumbnail"
                     width={900}
@@ -201,10 +307,10 @@ export default function Home() {
                 <div className="flex justify-center">
                   <button
                     type="submit"
-                    disabled={isSubmitting || !instructions.trim()}
+                    disabled={isSubmitting || (!instructions.trim() && !debugMode)}
                     className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
                   >
-                    {isSubmitting ? 'Processing with Nano Banana...' : 'Process with AI'}
+                    {isSubmitting ? (debugMode ? 'Processing (Debug)...' : 'Processing with Nano Banana...') : (debugMode ? 'Process (Debug)' : 'Process with AI')}
                   </button>
                 </div>
               </form>
